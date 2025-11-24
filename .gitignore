@@ -1,0 +1,192 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+pip-wheel-metadata/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual environments
+venv/
+ENV/
+env/
+.venv/
+env.bak/
+venv.bak/
+
+# IDEs and editors
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.project
+.pydevproject
+.settings/
+*.sublime-project
+*.sublime-workspace
+
+# Jupyter Notebook
+.ipynb_checkpoints
+*.ipynb
+
+# PyCharm
+.idea/
+
+# VS Code
+.vscode/
+*.code-workspace
+
+# Dataset files (too large for git)
+data/**/*.bag
+data/**/*.bag.active
+data/**/*.tar.gz
+data/**/*.zip
+data/**/*.tar
+data/MH_*/
+data/**/*.db3
+data/**/*.yaml
+
+# Results and outputs (generated files)
+results/**/*.ply
+results/**/*.png
+results/**/*.jpg
+results/**/*.jpeg
+results/**/*.npy
+results/**/*.npz
+results/**/*.pkl
+results/**/*.txt
+results/**/*.csv
+
+# Keep directory structure but ignore contents
+!results/.gitkeep
+!data/.gitkeep
+!calibration/.gitkeep
+!images/.gitkeep
+
+# Calibration files (uncomment if you don't want to version control)
+# calibration/*.pkl
+# calibration/*.yaml
+# calibration/*.json
+
+# LaTeX auxiliary files
+*.aux
+*.log
+*.out
+*.toc
+*.synctex.gz
+*.fdb_latexmk
+*.fls
+*.bbl
+*.blg
+*.nav
+*.snm
+*.vrb
+*.xdv
+*-blx.bib
+*.run.xml
+*.bcf
+
+# LaTeX compiled PDFs (keep source .tex but ignore compiled .pdf)
+docs/*.pdf
+!docs/informe.tex
+
+# OS files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+desktop.ini
+
+# Docker
+.dockerignore
+
+# Temporary files
+*.tmp
+*.temp
+*.bak
+*.backup
+*~
+*.swp
+*.swo
+
+# Extracted/generated text files
+tp_final_extracted.txt
+*.extracted.txt
+
+# Large PDFs (if not needed in repo)
+# tp_final.pdf
+
+# Logs
+*.log
+logs/
+*.log.*
+
+# Coverage reports
+htmlcov/
+.tox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+.hypothesis/
+.pytest_cache/
+
+# mypy
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# Profiling data
+.prof
+
+# Environment variables
+.env
+.env.local
+.env.*.local
+
+# ROS/ROS2
+.ros/
+.ros2/
+install/
+build/
+log/
+
+# Compiled binaries
+*.o
+*.a
+*.so
+*.dylib
+*.dll
+
+# CMake
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+Makefile
+
+# Backup files
+*.orig
+*~

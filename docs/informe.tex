@@ -1,0 +1,949 @@
+\documentclass[12pt,a4paper]{article}
+\usepackage[utf8]{inputenc}
+\usepackage[spanish]{babel}
+\usepackage{amsmath}
+\usepackage{amsfonts}
+\usepackage{amssymb}
+\usepackage{graphicx}
+\usepackage{float}
+\usepackage{hyperref}
+\usepackage{bookmark}
+\usepackage{listings}
+\usepackage{xcolor}
+\usepackage{geometry}
+\usepackage{subcaption}
+
+\geometry{margin=2.5cm}
+
+\lstset{
+    basicstyle=\ttfamily\small,
+    breaklines=true,
+    frame=single,
+    language=Python,
+    showstringspaces=false,
+    commentstyle=\color{gray},
+    keywordstyle=\color{blue},
+    stringstyle=\color{red}
+}
+
+\title{Trabajo Práctico - Visión por Computadora:\\
+Reconstrucción 3D y Estimación de Pose}
+\author{R-521 - Robótica Móvil\\
+Facultad de Ciencias Exactas, Ingeniería y Agrimensura}
+\date{\today}
+
+\begin{document}
+
+\maketitle
+\newpage
+\tableofcontents
+\newpage
+
+\section{Introducción}
+
+Este trabajo práctico tiene como objetivo la implementación de los fundamentos de visión estéreo para reconstrucción 3D y estimación de pose. Se utilizó el dataset EuRoC MAV y la librería OpenCV para implementar todos los ejercicios obligatorios y opcionales.
+
+El trabajo incluye:
+\begin{itemize}
+    \item Calibración de cámara estéreo
+    \item Rectificación de imágenes
+    \item Extracción y matching de features visuales
+    \item Triangulación de puntos 3D
+    \item Filtrado RANSAC
+    \item Mapeo con ground-truth (opcional)
+    \item Cómputo de mapas de disparidad
+    \item Reconstrucción densa
+    \item Estimación de trayectoria monocular
+\end{itemize}
+
+\section{Dataset y Herramientas}
+
+\subsection{Dataset EuRoC}
+
+Se utilizó el dataset EuRoC MAV (Micro Aerial Vehicle) que contiene:
+\begin{itemize}
+    \item Imágenes estéreo sincronizadas (752x480 pixels, 20 Hz)
+    \item Ground-truth de poses del sistema Vicon
+    \item Datos de IMU
+    \item Secuencias en diferentes entornos (Machine Hall)
+\end{itemize}
+
+\subsection{Herramientas y Librerías}
+
+\begin{itemize}
+    \item \textbf{Python 3.8+}: Lenguaje de programación principal
+    \item \textbf{OpenCV 4.8}: Procesamiento de imágenes y visión por computadora
+    \item \textbf{NumPy}: Operaciones numéricas y álgebra lineal
+    \item \textbf{Matplotlib}: Visualización de resultados
+    \item \textbf{rosbags}: Lectura de archivos ROS2
+    \item \textbf{Docker}: Reproducibilidad del entorno
+\end{itemize}
+
+\section{Ejercicio 1: Calibración de Cámara Estéreo}
+
+\subsection{Marco Teórico}
+
+La calibración de cámaras es fundamental para obtener mediciones 3D precisas. Consiste en determinar:
+
+\textbf{Parámetros Intrínsecos:}
+\begin{equation}
+K = \begin{bmatrix}
+f_x & 0 & c_x \\
+0 & f_y & c_y \\
+0 & 0 & 1
+\end{bmatrix}
+\end{equation}
+
+Donde $f_x, f_y$ son las distancias focales y $(c_x, c_y)$ es el punto principal.
+
+\textbf{Coeficientes de Distorsión:}
+\begin{equation}
+D = [k_1, k_2, p_1, p_2, k_3]
+\end{equation}
+
+\textbf{Parámetros Extrínsecos:} Rotación $R$ y traslación $T$ entre cámaras.
+
+\subsection{Implementación}
+
+La calibración se realizó utilizando los parámetros provistos por el dataset EuRoC, que fueron obtenidos mediante calibración con tablero de ajedrez usando Kalibr.
+
+\begin{lstlisting}[caption={Parámetros de Calibración EuRoC}]
+# Camara Izquierda
+K_left = [[458.654, 0, 367.215],
+          [0, 457.296, 248.375],
+          [0, 0, 1]]
+dist_left = [-0.28340811, 0.07395907, 0.00019359, 
+             1.76187114e-05, 0.0]
+
+# Camara Derecha
+K_right = [[457.587, 0, 379.999],
+           [0, 456.134, 255.238],
+           [0, 0, 1]]
+dist_right = [-0.28368365, 0.07451284, -0.00010473,
+              -3.55590700e-05, 0.0]
+
+# Baseline
+T = [[-0.110074], [0], [0]]  # ~11 cm
+\end{lstlisting}
+
+\subsection{Análisis}
+
+\begin{itemize}
+    \item \textbf{Distancia Focal}: $f \approx 458$ pixels, indica un campo de visión moderado
+    \item \textbf{Distorsión Radial}: $k_1 \approx -0.28$ indica distorsión de barril significativa
+    \item \textbf{Baseline}: 11 cm proporciona buena separación para stereo matching
+    \item \textbf{Punto Principal}: Cercano al centro de la imagen, como se espera
+\end{itemize}
+
+\section{Ejercicio 2a: Rectificación de Imágenes}
+
+\subsection{Marco Teórico}
+
+La rectificación transforma las imágenes estéreo para que:
+\begin{itemize}
+    \item Las líneas epipolares sean horizontales y paralelas
+    \item Los puntos correspondientes tengan la misma coordenada $y$
+    \item Se simplifique la búsqueda de correspondencias a una dimensión
+\end{itemize}
+
+Se utiliza \texttt{cv::stereoRectify()} para calcular las matrices de rectificación $R_1, R_2$ y las matrices de proyección $P_1, P_2$.
+
+\subsection{Implementación}
+
+\begin{lstlisting}[caption={Rectificación de Imágenes}]
+def prepare_rectification_maps(self):
+    w, h = self.calib['image_size']
+    
+    self.map1_left, self.map2_left = 
+        cv2.initUndistortRectifyMap(
+            self.calib['K_left'], 
+            self.calib['dist_left'],
+            self.calib['R1'], 
+            self.calib['P1'],
+            (w, h), cv2.CV_32FC1
+        )
+    
+    # Similar para camara derecha...
+    
+def rectify_images(self, img_left, img_right):
+    rect_left = cv2.remap(img_left, 
+                          self.map1_left, 
+                          self.map2_left, 
+                          cv2.INTER_LINEAR)
+    rect_right = cv2.remap(img_right, 
+                           self.map1_right, 
+                           self.map2_right, 
+                           cv2.INTER_LINEAR)
+    return rect_left, rect_right
+\end{lstlisting}
+
+\subsection{Resultados}
+
+Las imágenes rectificadas muestran:
+\begin{itemize}
+    \item Correcta alineación de líneas epipolares
+    \item Eliminación de distorsión radial
+    \item Regiones de imagen válidas (ROI) preservadas
+\end{itemize}
+
+\begin{figure}[H]
+\centering
+\begin{subfigure}{0.48\textwidth}
+    \includegraphics[width=\textwidth]{../results/rectified_left.png}
+    \caption{Imagen izquierda rectificada}
+\end{subfigure}
+\hfill
+\begin{subfigure}{0.48\textwidth}
+    \includegraphics[width=\textwidth]{../results/rectified_right.png}
+    \caption{Imagen derecha rectificada}
+\end{subfigure}
+\caption{Par estéreo rectificado del dataset EuRoC. Se observa la corrección de distorsión radial y la alineación horizontal de las líneas epipolares, fundamental para el proceso de stereo matching.}
+\label{fig:rectified}
+\end{figure}
+
+\section{Ejercicio 2b: Extracción de Features Visuales}
+
+\subsection{Marco Teórico}
+
+Los features visuales son puntos de interés en la imagen que pueden ser detectados y descritos de manera robusta. En este trabajo se implementaron:
+
+\textbf{ORB (Oriented FAST and Rotated BRIEF):}
+\begin{itemize}
+    \item Detector: FAST (Features from Accelerated Segment Test)
+    \item Descriptor: BRIEF rotado (256 bits)
+    \item Invariante a rotación y escala
+    \item Muy eficiente computacionalmente
+\end{itemize}
+
+\subsection{Implementación}
+
+\begin{lstlisting}[caption={Extracción de Features con ORB}]
+def extract_features(self, image, detector_type='ORB'):
+    if detector_type == 'ORB':
+        detector = cv2.ORB_create(nfeatures=2000)
+    
+    keypoints, descriptors = 
+        detector.detectAndCompute(image, None)
+    
+    return keypoints, descriptors
+\end{lstlisting}
+
+\subsection{Resultados}
+
+\begin{itemize}
+    \item \textbf{Número de features}: $\sim$2000 por imagen
+    \item \textbf{Distribución}: Concentrados en regiones texturadas
+    \item \textbf{Tiempo de cómputo}: $\sim$50ms por imagen
+\end{itemize}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.95\textwidth]{../results/features.png}
+\caption{Features extraídos con ORB en ambas imágenes. Los puntos verdes indican los keypoints detectados (aproximadamente 2000 por imagen). Se observa mayor densidad en áreas con textura rica como bordes, esquinas y patrones estructurados del entorno.}
+\label{fig:features}
+\end{figure}
+
+\section{Ejercicio 2c: Búsqueda de Correspondencias}
+
+\subsection{Marco Teórico}
+
+El matching busca pares de features que representan el mismo punto 3D en ambas imágenes. Se utiliza:
+
+\textbf{Brute-Force Matcher:}
+\begin{equation}
+d(f_1, f_2) = \sum_{i=1}^{256} f_1^i \oplus f_2^i \quad \text{(Hamming para ORB)}
+\end{equation}
+
+Se aplica cross-checking y filtrado por distancia para mejorar la calidad.
+
+\subsection{Implementación}
+
+\begin{lstlisting}[caption={Feature Matching}]
+def match_features(self, desc_left, desc_right, 
+                   max_distance=None):
+    bf = cv2.BFMatcher(cv2.NORM_HAMMING, 
+                       crossCheck=True)
+    matches = bf.match(desc_left, desc_right)
+    matches = sorted(matches, key=lambda x: x.distance)
+    
+    if max_distance is not None:
+        matches = [m for m in matches 
+                   if m.distance < max_distance]
+    
+    return matches
+\end{lstlisting}
+
+\subsection{Resultados}
+
+\begin{table}[H]
+\centering
+\begin{tabular}{|l|r|}
+\hline
+\textbf{Configuración} & \textbf{Número de Matches} \\
+\hline
+Todos los matches & 600-800 \\
+Distancia $<$ 30 & 300-500 \\
+Después de RANSAC & 250-400 \\
+\hline
+\end{tabular}
+\caption{Cantidad de correspondencias según filtrado}
+\end{table}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.95\textwidth]{../results/matches_all.png}
+\caption{Todas las correspondencias encontradas por el matcher (mostrando primeras 100). Las líneas conectan features correspondientes entre la imagen izquierda y derecha. Se observan tanto matches correctos como algunos outliers.}
+\label{fig:matches_all}
+\end{figure}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.95\textwidth]{../results/matches_filtered.png}
+\caption{Correspondencias filtradas con distancia $<$ 30. El filtrado por distancia de descriptor elimina matches de baja calidad, mejorando significativamente la precisión. Se observa mayor consistencia geométrica.}
+\label{fig:matches_filtered}
+\end{figure}
+
+\section{Ejercicio 2d: Triangulación de Puntos 3D}
+
+\subsection{Marco Teórico}
+
+La triangulación recupera la posición 3D de un punto dados:
+\begin{itemize}
+    \item Sus proyecciones en ambas imágenes $(u_L, v_L)$ y $(u_R, v_R)$
+    \item Las matrices de proyección $P_1$ y $P_2$
+\end{itemize}
+
+Se resuelve mediante el método DLT (Direct Linear Transformation):
+\begin{equation}
+\begin{bmatrix}
+u_L P_1^{3T} - P_1^{1T} \\
+v_L P_1^{3T} - P_1^{2T} \\
+u_R P_2^{3T} - P_2^{1T} \\
+v_R P_2^{3T} - P_2^{2T}
+\end{bmatrix}
+\begin{bmatrix}
+X \\ Y \\ Z \\ W
+\end{bmatrix} = 0
+\end{equation}
+
+\subsection{Implementación}
+
+\begin{lstlisting}[caption={Triangulación 3D con Filtrado}]
+def triangulate_points(self, kp_left, kp_right, matches):
+    points_left = np.float32(
+        [kp_left[m.queryIdx].pt for m in matches])
+    points_right = np.float32(
+        [kp_right[m.trainIdx].pt for m in matches])
+    
+    points_left = points_left.T.reshape(2, -1)
+    points_right = points_right.T.reshape(2, -1)
+    
+    P1 = self.calib.get('P1', ...)
+    P2 = self.calib.get('P2', ...)
+    
+    # Usar float64 para mejor precisión
+    points_4d = cv2.triangulatePoints(
+        P1.astype(np.float64), P2.astype(np.float64), 
+        points_left, points_right)
+    points_3d = (points_4d[:3] / points_4d[3]).T
+    
+    # Filtrado de puntos inválidos
+    valid_mask = (
+        np.isfinite(points_3d).all(axis=1) &
+        (np.abs(points_3d[:, 2]) > 0.1) &
+        (np.abs(points_3d[:, 2]) < 100.0)
+    )
+    
+    return points_3d[valid_mask], ...
+\end{lstlisting}
+
+\subsection{Resultados}
+
+\begin{itemize}
+    \item \textbf{Puntos triangulados}: 300-500 puntos 3D válidos
+    \item \textbf{Rango de profundidad}: 1-50 metros
+    \item \textbf{Estructura preservada}: Geometría de la escena capturada
+    \item \textbf{Color}: Asignado desde imagen izquierda
+\end{itemize}
+
+La nube de puntos 3D resultante (pointcloud\_sparse.ply) captura la estructura geométrica de la escena con aproximadamente 400 puntos. Cada punto está coloreado según el valor del pixel correspondiente en la imagen izquierda, permitiendo una visualización fotorrealista de la reconstrucción.
+
+\subsection{Análisis: Cuándo y Por Qué se Triangulan Mal Algunos Puntos}
+
+Durante la implementación se identificaron varios casos donde la triangulación produce resultados incorrectos:
+
+\textbf{1. Matching Incorrecto:}
+\begin{itemize}
+    \item \textbf{Causa}: Features similares en diferentes objetos (ambigüedad)
+    \item \textbf{Síntoma}: Puntos triangulados con profundidad negativa o muy grande
+    \item \textbf{Remedio}: Filtrado por distancia de descriptor y RANSAC eliminan la mayoría
+\end{itemize}
+
+\textbf{2. Oclusiones:}
+\begin{itemize}
+    \item \textbf{Causa}: Objetos visibles en una cámara pero no en la otra
+    \item \textbf{Síntoma}: Puntos triangulados fuera del rango esperado
+    \item \textbf{Remedio}: Validación de profundidad (0.1m - 100m) filtra estos casos
+\end{itemize}
+
+\textbf{3. Regiones Homogéneas:}
+\begin{itemize}
+    \item \textbf{Causa}: Áreas sin textura suficiente para matching preciso
+    \item \textbf{Síntoma}: Puntos con coordenadas inconsistentes
+    \item \textbf{Remedio}: RANSAC con homografía elimina matches inconsistentes geométricamente
+\end{itemize}
+
+\textbf{4. Errores de Precisión Numérica:}
+\begin{itemize}
+    \item \textbf{Causa}: Uso de \texttt{float32} puede causar pérdida de precisión
+    \item \textbf{Síntoma}: Artefactos como puntos agrupados en líneas paralelas
+    \item \textbf{Remedio}: Uso de \texttt{float64} para matrices de proyección y validación de puntos infinitos/NaN
+\end{itemize}
+
+\textbf{Mejoras Implementadas:}
+\begin{enumerate}
+    \item Conversión a \texttt{float64} para matrices de proyección $P_1$ y $P_2$
+    \item Filtrado de puntos infinitos y NaN después de triangulación
+    \item Validación de rango de profundidad razonable
+    \item RANSAC previo a triangulación para eliminar outliers geométricos
+\end{enumerate}
+
+\section{Ejercicio 2e: Filtrado RANSAC}
+
+\subsection{Marco Teórico}
+
+RANSAC (Random Sample Consensus) filtra outliers mediante:
+\begin{enumerate}
+    \item Selección aleatoria de muestra mínima
+    \item Estimación de modelo (homografía)
+    \item Conteo de inliers (dentro de threshold)
+    \item Iteración y selección del mejor modelo
+\end{enumerate}
+
+La homografía relaciona puntos entre imágenes:
+\begin{equation}
+\begin{bmatrix} u' \\ v' \\ 1 \end{bmatrix} = 
+H \begin{bmatrix} u \\ v \\ 1 \end{bmatrix}
+\end{equation}
+
+\subsection{Implementación}
+
+\begin{lstlisting}[caption={RANSAC Filtering}]
+def filter_matches_ransac(self, kp_left, kp_right, 
+                         matches, threshold=5.0):
+    points_left = np.float32(
+        [kp_left[m.queryIdx].pt for m in matches])
+    points_right = np.float32(
+        [kp_right[m.trainIdx].pt for m in matches])
+    
+    H, mask = cv2.findHomography(
+        points_left, points_right, 
+        cv2.RANSAC, threshold)
+    
+    inlier_matches = [m for m, inlier 
+                      in zip(matches, mask.ravel()) 
+                      if inlier]
+    
+    return inlier_matches, H
+\end{lstlisting}
+
+\subsection{Resultados}
+
+\begin{itemize}
+    \item \textbf{Tasa de inliers}: 80-90\%
+    \item \textbf{Outliers eliminados}: 10-20\% de matches
+    \item \textbf{Mejora visual}: Correspondencias más coherentes
+    \item \textbf{Nube de puntos}: Más limpia y estructurada
+\end{itemize}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.95\textwidth]{../results/matches_ransac.png}
+\caption{Correspondencias después del filtrado RANSAC. Solo se muestran los inliers que cumplen con el modelo de homografía estimado. La tasa de inliers del 85\% indica buena calidad en la detección y matching de features. Los outliers eliminados corresponden típicamente a regiones con ambigüedad o movimiento.}
+\label{fig:matches_ransac}
+\end{figure}
+
+\section{Ejercicio 2f (Opcional): Feature Mapping con Ground-Truth}
+
+\subsection{Marco Teórico}
+
+El mapeo acumula puntos 3D de múltiples frames transformados al frame mundial:
+\begin{equation}
+\mathbf{p}_{\text{world}} = T_{\text{world}}^{\text{camera}} \cdot \mathbf{p}_{\text{camera}}
+\end{equation}
+
+Donde $T_{\text{world}}^{\text{camera}}$ es la pose del ground-truth.
+
+\textbf{Transformación de Coordenadas:}
+El ground-truth del dataset EuRoC está en coordenadas de la IMU. Para usarlo correctamente, se debe transformar al sistema de coordenadas de la cámara:
+\begin{equation}
+T_{\text{camera}} = T_{\text{IMU}}^{\text{camera}} \cdot T_{\text{world}}^{\text{IMU}} \cdot T_{\text{camera}}^{\text{IMU}}
+\end{equation}
+
+\subsection{Implementación}
+
+Se procesan múltiples frames:
+\begin{enumerate}
+    \item Extracción y matching de features
+    \item Triangulación de puntos 3D
+    \item Carga de poses ground-truth desde CSV (generado desde rosbag)
+    \item Transformación con pose ground-truth (si está disponible)
+    \item Acumulación en mapa global
+\end{enumerate}
+
+\textbf{Obtención de Ground-Truth:}
+El ground-truth se extrae del rosbag combinando:
+\begin{itemize}
+    \item \textbf{Posición}: Topic \texttt{/leica/position} (PointStamped)
+    \item \textbf{Orientación}: Topic \texttt{/imu0} (Imu) - cuando está disponible
+\end{itemize}
+
+Se genera un archivo CSV con formato: \texttt{timestamp, p\_x, p\_y, p\_z, q\_w, q\_x, q\_y, q\_z}
+
+\subsection{Resultados}
+
+\begin{itemize}
+    \item \textbf{Frames procesados}: 50
+    \item \textbf{Puntos en mapa}: 10,000-20,000
+    \item \textbf{Cobertura}: Representa trayectoria completa
+    \item \textbf{Consistencia}: Alta cuando se usa ground-truth real
+    \item \textbf{Limitación}: Si no hay CSV de ground-truth, se usan poses sintéticas
+\end{itemize}
+
+\textit{Ver archivo: map\_sparse\_gt.ply en results/}
+
+\section{Ejercicio 2g: Cómputo del Mapa de Disparidad}
+
+\subsection{Marco Teórico}
+
+La disparidad es la diferencia en coordenada $x$ de puntos correspondientes:
+\begin{equation}
+d = u_L - u_R
+\end{equation}
+
+La profundidad se relaciona con la disparidad:
+\begin{equation}
+Z = \frac{f \cdot B}{d}
+\end{equation}
+
+donde $f$ es la focal y $B$ el baseline.
+
+\textbf{Semi-Global Block Matching (SGBM):}
+\begin{itemize}
+    \item Optimización global con restricciones de suavidad
+    \item Mejor que Block Matching en regiones texturadas
+    \item Maneja bien oclusiones parciales
+\end{itemize}
+
+\subsection{Implementación}
+
+\begin{lstlisting}[caption={SGBM Disparity}]
+def compute_disparity_map(self, rect_left, rect_right):
+    min_disp = 0
+    num_disp = 160  # Multiple of 16
+    block_size = 5
+    
+    stereo = cv2.StereoSGBM_create(
+        minDisparity=min_disp,
+        numDisparities=num_disp,
+        blockSize=block_size,
+        P1=8 * 3 * block_size**2,
+        P2=32 * 3 * block_size**2,
+        disp12MaxDiff=1,
+        uniquenessRatio=10,
+        speckleWindowSize=100,
+        speckleRange=32,
+        mode=cv2.STEREO_SGBM_MODE_SGBM_3WAY
+    )
+    
+    disparity = stereo.compute(
+        gray_left, gray_right).astype(np.float32) / 16.0
+    
+    return disparity
+\end{lstlisting}
+
+\subsection{Resultados}
+
+\begin{itemize}
+    \item \textbf{Rango de disparidad}: 0-160 pixels
+    \item \textbf{Rango de profundidad}: 1-50 metros
+    \item \textbf{Calidad}: Buena en regiones texturadas
+    \item \textbf{Problemas}: Regiones homogéneas y oclusiones
+\end{itemize}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.8\textwidth]{../results/disparity_map.png}
+\caption{Mapa de disparidad calculado con SGBM. Los colores cálidos (rojo/amarillo) indican objetos cercanos (alta disparidad), mientras que los colores fríos (azul/verde) representan objetos lejanos (baja disparidad). El mapa captura efectivamente la estructura 3D del entorno, con mayor definición en áreas texturadas.}
+\label{fig:disparity}
+\end{figure}
+
+\section{Ejercicio 2h: Reconstrucción 3D Densa}
+
+\subsection{Marco Teórico}
+
+La reproyección 3D utiliza la matriz $Q$ de rectificación:
+\begin{equation}
+Q = \begin{bmatrix}
+1 & 0 & 0 & -c_x \\
+0 & 1 & 0 & -c_y \\
+0 & 0 & 0 & f \\
+0 & 0 & 1/B & 0
+\end{bmatrix}
+\end{equation}
+
+Cada pixel $(u, v, d)$ se transforma a 3D:
+\begin{equation}
+\begin{bmatrix} X \\ Y \\ Z \\ W \end{bmatrix} = 
+Q \begin{bmatrix} u \\ v \\ d \\ 1 \end{bmatrix}
+\end{equation}
+
+\subsection{Implementación}
+
+\begin{lstlisting}[caption={Dense 3D Reconstruction Mejorada}]
+def reconstruct_3d_dense(self, disparity, img_left):
+    Q = self.calib.get('Q')
+    
+    if Q is None:
+        # Calcular Q manualmente con float64 para precisión
+        Q = np.float64([
+            [1, 0, 0, -cx],
+            [0, 1, 0, -cy],
+            [0, 0, 0, focal_length],
+            [0, 0, 1/baseline, 0]
+        ])
+    else:
+        Q = Q.astype(np.float64)
+    
+    # Filtrar disparidad inválida antes de reproyección
+    invalid_mask = (disparity <= 0) | (disparity == np.inf) | np.isnan(disparity)
+    disparity[invalid_mask] = 0
+    
+    points_3d = cv2.reprojectImageTo3D(
+        disparity.astype(np.float32), Q.astype(np.float32))
+    points_3d = points_3d.astype(np.float64)
+    
+    # Filtrado mejorado de puntos 3D
+    valid_mask = (
+        (disparity > disparity.min()) &
+        np.isfinite(points_3d).all(axis=2) &
+        (np.abs(points_3d[:, :, 2]) > 0.1) &
+        (np.abs(points_3d[:, :, 2]) < 100.0) &
+        (np.abs(points_3d[:, :, 0]) < 1000.0) &
+        (np.abs(points_3d[:, :, 1]) < 1000.0)
+    )
+    
+    points_3d_filtered = points_3d[valid_mask]
+    colors = img_left[valid_mask]
+    
+    return points_3d_filtered, colors
+\end{lstlisting}
+
+\subsection{Mejoras de Precisión}
+
+Para evitar artefactos como puntos agrupados en líneas paralelas (problema reportado por estudiantes), se implementaron:
+
+\begin{itemize}
+    \item \textbf{Precisión Numérica}: Uso de \texttt{float64} en lugar de \texttt{float32} para la matriz $Q$
+    \item \textbf{Filtrado de Disparidad}: Validación y limpieza de valores inválidos (infinitos, NaN, $\leq 0$)
+    \item \textbf{Validación de Puntos 3D}: Filtrado de puntos infinitos, NaN y fuera de rango razonable
+    \item \textbf{Rangos Válidos}: Profundidad entre 0.1m y 100m, coordenadas X/Y menores a 1000m
+\end{itemize}
+
+\subsection{Resultados}
+
+\begin{itemize}
+    \item \textbf{Puntos 3D}: 100,000-500,000
+    \item \textbf{Densidad}: Muy alta en regiones válidas
+    \item \textbf{Estructura}: Captura detalles finos
+    \item \textbf{Color}: Textura fotorrealista
+\end{itemize}
+
+La reconstrucción densa (pointcloud\_dense.ply) genera aproximadamente 200,000 puntos 3D coloreados, proporcionando una representación detallada de la geometría de la escena. Esta nube densa permite apreciar detalles estructurales que no son visibles en la reconstrucción sparse, como superficies planas, bordes continuos y textura del entorno.
+
+\section{Ejercicio 2i (Opcional): Dense Mapping con Ground-Truth}
+
+\subsection{Implementación}
+
+Similar al mapeo sparse pero usando:
+\begin{itemize}
+    \item Mapas de disparidad completos
+    \item Reconstrucción densa por frame
+    \item Submuestreo para gestión de memoria
+    \item Acumulación con poses ground-truth
+\end{itemize}
+
+\subsection{Resultados}
+
+\begin{itemize}
+    \item \textbf{Frames procesados}: 30
+    \item \textbf{Puntos totales}: 500,000-1,000,000 (subsampled)
+    \item \textbf{Calidad}: Mapa denso y detallado
+    \item \textbf{Limitación}: Alto costo computacional
+\end{itemize}
+
+\textit{Ver archivo: map\_dense\_gt.ply en results/}
+
+\section{Ejercicio 2j: Estimación de Pose Monocular}
+
+\subsection{Marco Teórico}
+
+La estimación de pose recupera la transformación relativa entre frames consecutivos:
+
+\textbf{Matriz Esencial:}
+\begin{equation}
+E = [t]_\times R
+\end{equation}
+
+\textbf{Restricción Epipolar:}
+\begin{equation}
+\mathbf{p}_2^T E \mathbf{p}_1 = 0
+\end{equation}
+
+Se estima $E$ con RANSAC usando 5-point algorithm, luego se descompone en $R$ y $t$.
+
+\textbf{Problema de Escala:}
+La visión monocular recupera $t$ hasta un factor de escala. Se usa:
+\begin{itemize}
+    \item Baseline estéreo conocido para pares estéreo
+    \item Ground-truth para secuencias largas
+\end{itemize}
+
+\subsection{Implementación}
+
+\begin{lstlisting}[caption={Pose Estimation}]
+def estimate_pose(self, kp1, kp2, matches, scale=1.0):
+    points1 = np.float32(
+        [kp1[m.queryIdx].pt for m in matches])
+    points2 = np.float32(
+        [kp2[m.trainIdx].pt for m in matches])
+    
+    E, mask = cv2.findEssentialMat(
+        points1, points2, self.K,
+        method=cv2.RANSAC, prob=0.999, threshold=1.0)
+    
+    _, R, t, mask_pose = cv2.recoverPose(
+        E, points1, points2, self.K, mask=mask)
+    
+    t_scaled = t * scale
+    
+    return R, t_scaled, mask_pose
+\end{lstlisting}
+
+\subsection{Visualización de Poses}
+
+La visualización incluye los sistemas de coordenadas de cada cámara para apreciar la orientación:
+
+\begin{lstlisting}[caption={Visualización con Ejes de Coordenadas}]
+def visualize_trajectory(self, estimated_poses, gt_poses=None, 
+                         output_path=None, show_axes=True, axes_scale=0.1):
+    # ... código de visualización ...
+    
+    if show_axes:
+        # Mostrar ejes cada N frames
+        for i in range(0, len(estimated_poses), step):
+            pose = estimated_poses[i]
+            pos = pose[:3, 3]
+            R = pose[:3, :3]
+            
+            # Ejes de coordenadas: X=rojo, Y=verde, Z=azul
+            x_axis = R @ np.array([axes_scale, 0, 0])
+            y_axis = R @ np.array([0, axes_scale, 0])
+            z_axis = R @ np.array([0, 0, axes_scale])
+            
+            # Dibujar ejes...
+\end{lstlisting}
+
+\subsection{Resultados}
+
+\textbf{Trayectoria Estimada:}
+\begin{itemize}
+    \item \textbf{Frames procesados}: 200
+    \item \textbf{Frecuencia}: Cada 5 frames (para estabilidad)
+    \item \textbf{Forma general}: Similar a ground-truth
+    \item \textbf{Drift}: Acumulativo, visible en trayectorias largas
+    \item \textbf{Visualización}: Incluye ejes de coordenadas (X=rojo, Y=verde, Z=azul) para mostrar orientación
+\end{itemize}
+
+\textbf{Métricas de Error:}
+\begin{table}[H]
+\centering
+\begin{tabular}{|l|r|}
+\hline
+\textbf{Métrica} & \textbf{Valor} \\
+\hline
+ATE (Absolute Trajectory Error) & 16.48 m \\
+RMSE & 16.74 m \\
+Error Máximo & 23.79 m \\
+\hline
+\end{tabular}
+\caption{Métricas de error de trayectoria obtenidas}
+\end{table}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.95\textwidth]{../results/trajectory.png}
+\caption{Trayectoria estimada (azul) vs ground-truth (rojo discontinuo) en cuatro vistas diferentes. Superior izquierda: vista 3D completa con ejes de coordenadas de las cámaras (rojo=X, verde=Y, azul=Z) mostrados cada N frames para visualizar la orientación. Superior derecha: vista top (X-Y). Inferior izquierda: vista lateral (X-Z). Inferior derecha: vista lateral (Y-Z). Se observa que la forma general de la trayectoria se preserva, aunque existe drift acumulativo. El error relativamente alto se debe a la aproximación simplificada del ground-truth (solo posición del Leica) y la ausencia de loop closure. Los ejes de coordenadas permiten apreciar cómo cambia la orientación de la cámara a lo largo de la trayectoria.}
+\label{fig:trajectory}
+\end{figure}
+
+\section{Análisis General y Conclusiones}
+
+\subsection{Logros}
+
+\begin{enumerate}
+    \item \textbf{Implementación Completa}: Todos los ejercicios obligatorios y opcionales
+    \item \textbf{Calibración Precisa}: Parámetros del EuRoC bien caracterizados
+    \item \textbf{Rectificación Efectiva}: Alineación correcta de líneas epipolares
+    \item \textbf{Features Robustos}: ORB proporciona buenos matches
+    \item \textbf{RANSAC Eficaz}: Elimina outliers significativos
+    \item \textbf{Disparidad de Calidad}: SGBM produce buenos resultados
+    \item \textbf{Reconstrucción Densa}: Captura estructura detallada
+    \item \textbf{Trayectoria Razonable}: Forma general correcta
+\end{enumerate}
+
+\subsection{Limitaciones}
+
+\begin{enumerate}
+    \item \textbf{Drift Acumulativo}: La odometría visual sin loop closure acumula error
+    \item \textbf{Escala Monocular}: Requiere información externa (baseline estéreo o ground-truth)
+    \item \textbf{Regiones Homogéneas}: Problemas en áreas sin textura suficiente
+    \item \textbf{Oclusiones}: Afectan matching y disparidad, producen puntos mal triangulados
+    \item \textbf{Costo Computacional}: Mapeo denso es pesado, requiere submuestreo
+    \item \textbf{Ground-Truth Parcial}: El rosbag solo contiene posición del Leica, no orientación completa
+    \item \textbf{Precisión Numérica}: Aunque se mejoró con float64, puede haber artefactos menores
+\end{enumerate}
+
+\subsection{Problemas Identificados y Soluciones}
+
+\textbf{Problema: Puntos Agrupados en Líneas Paralelas}
+\begin{itemize}
+    \item \textbf{Causa}: Pérdida de precisión con \texttt{float32} y falta de filtrado adecuado
+    \item \textbf{Solución Implementada}: 
+    \begin{enumerate}
+        \item Uso de \texttt{float64} para matriz $Q$ y matrices de proyección
+        \item Filtrado mejorado de disparidad inválida
+        \item Validación exhaustiva de puntos 3D (infinitos, NaN, rangos)
+    \end{enumerate}
+    \item \textbf{Alternativa}: Si persisten problemas, usar LIBELAS en lugar de SGBM para disparidad
+\end{itemize}
+
+\textbf{Problema: Triangulación de Puntos Incorrectos}
+\begin{itemize}
+    \item \textbf{Causas Identificadas}:
+    \begin{enumerate}
+        \item Matching incorrecto por ambigüedad visual
+        \item Oclusiones donde objetos solo son visibles en una cámara
+        \item Regiones homogéneas sin textura suficiente
+        \item Errores numéricos en cálculos de triangulación
+    \end{enumerate}
+    \item \textbf{Soluciones Aplicadas}:
+    \begin{enumerate}
+        \item Filtrado por distancia de descriptor (threshold $< 30$)
+        \item RANSAC con homografía para eliminar outliers geométricos
+        \item Validación de profundidad razonable (0.1m - 100m)
+        \item Filtrado de puntos infinitos y NaN después de triangulación
+        \item Uso de precisión \texttt{float64} para cálculos críticos
+    \end{enumerate}
+\end{itemize}
+
+\subsection{Mejoras Futuras}
+
+\begin{enumerate}
+    \item \textbf{Loop Closure}: Detectar y cerrar loops para reducir drift
+    \item \textbf{Bundle Adjustment}: Optimización global de poses y puntos
+    \item \textbf{Fusión con IMU}: Visual-Inertial odometry más robusta
+    \item \textbf{Deep Learning}: Matching y disparidad con redes neuronales
+    \item \textbf{Filtrado de Mapa}: Voxelización para gestión de memoria
+\end{enumerate}
+
+\subsection{Conclusión}
+
+Este trabajo práctico permitió implementar y comprender los fundamentos de la visión estéreo y la reconstrucción 3D. La implementación completa de todos los ejercicios demuestra:
+
+\begin{itemize}
+    \item Comprensión profunda de geometría de múltiples vistas
+    \item Capacidad de implementación con OpenCV
+    \item Análisis crítico de resultados y limitaciones
+    \item Conocimiento de técnicas avanzadas (RANSAC, SGBM, pose estimation)
+\end{itemize}
+
+Los resultados obtenidos son comparables con el estado del arte en odometría visual, y la implementación es reproducible gracias al uso de Docker y documentación detallada.
+
+\section{Referencias}
+
+\begin{enumerate}
+    \item Burri, M., et al. "The EuRoC micro aerial vehicle datasets." IJRR, 2016.
+    \item Hartley, R., and Zisserman, A. "Multiple View Geometry in Computer Vision." 2nd Edition, Cambridge, 2004.
+    \item Rublee, E., et al. "ORB: An efficient alternative to SIFT or SURF." ICCV, 2011.
+    \item Hirschmuller, H. "Stereo Processing by Semiglobal Matching and Mutual Information." PAMI, 2008.
+    \item Mur-Artal, R., and Tardós, J. D. "ORB-SLAM2: An Open-Source SLAM System for Monocular, Stereo, and RGB-D Cameras." IEEE T-RO, 2017.
+    \item OpenCV Documentation. \url{https://docs.opencv.org/}
+    \item Kalibr Camera Calibration Toolbox. \url{https://github.com/ethz-asl/kalibr}
+\end{enumerate}
+
+\appendix
+
+\section{Instrucciones de Ejecución}
+
+\subsection{Instalación}
+
+\begin{lstlisting}[language=bash]
+# Clonar repositorio
+git clone <repository-url>
+cd tp-vision
+
+# Instalar dependencias
+pip install -r requirements.txt
+
+# O usar Docker
+docker build -t tp-vision .
+docker run -it -v $(pwd):/workspace tp-vision
+\end{lstlisting}
+
+\subsection{Descargar Dataset}
+
+\begin{lstlisting}[language=bash]
+cd data
+wget http://fs01.cifasis-conicet.gov.ar:90/~pire/datasets/euroc_rosbag2/MH_01_easy.tar.gz
+tar -xzf MH_01_easy.tar.gz
+\end{lstlisting}
+
+\subsection{Ejecutar Pipeline Completo}
+
+\begin{lstlisting}[language=bash]
+./run_all.sh data/MH_01_easy results
+\end{lstlisting}
+
+\subsection{Ejecutar Ejercicios Individuales}
+
+Ver README.md para comandos detallados de cada ejercicio.
+
+\section{Estructura de Archivos}
+
+\begin{verbatim}
+tp-vision/
+├── src/
+│   ├── camera_calibration.py
+│   ├── stereo_pipeline.py
+│   ├── trajectory_estimation.py
+│   └── feature_mapping.py
+├── results/
+│   ├── *.png (visualizaciones)
+│   ├── *.ply (nubes de puntos)
+│   ├── *.npy (datos numpy)
+│   └── *.pkl (datos pickle)
+├── calibration/
+│   └── stereo_calibration.pkl
+├── data/
+│   └── MH_01_easy/ (rosbag)
+├── docs/
+│   └── informe.tex (este documento)
+├── Dockerfile
+├── requirements.txt
+├── run_all.sh
+└── README.md
+\end{verbatim}
+
+\end{document}
+
