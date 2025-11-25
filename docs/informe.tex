@@ -903,17 +903,43 @@ docker run -it -v $(pwd):/workspace tp-vision
 
 \subsection{Descargar Dataset}
 
+El proyecto requiere un rosbag del dataset EuRoC MAV en formato ROS2:
+
 \begin{lstlisting}[language=bash]
-cd data
-wget http://fs01.cifasis-conicet.gov.ar:90/~pire/datasets/euroc_rosbag2/MH_01_easy.tar.gz
-tar -xzf MH_01_easy.tar.gz
+# Crear directorio para datos
+mkdir -p data/MH_01_easy
+cd data/MH_01_easy
+
+# Descargar el rosbag (aproximadamente 2.5 GB)
+curl -L -o MH_01_easy_with_camera_info.db3 \
+  "http://fs01.cifasis-conicet.gov.ar:90/~pire/datasets/euroc_rosbag2/MH_01_easy_with_camera_info/MH_01_easy_with_camera_info.db3"
+
+# Descargar metadata (requerido para ROS2)
+curl -L -o metadata.yaml \
+  "http://fs01.cifasis-conicet.gov.ar:90/~pire/datasets/euroc_rosbag2/MH_01_easy_with_camera_info/metadata.yaml"
+
+cd ../..
 \end{lstlisting}
+
+\textbf{Nota:} El archivo del rosbag es grande (~2.5 GB). La descarga puede tardar 10-30 minutos dependiendo de la velocidad de conexión.
 
 \subsection{Ejecutar Pipeline Completo}
 
 \begin{lstlisting}[language=bash]
 ./run_all.sh data/MH_01_easy results
 \end{lstlisting}
+
+\subsection{Compilar el Informe PDF}
+
+Después de ejecutar los ejercicios, las imágenes se generan en \texttt{results/}. Para compilar el PDF con todas las imágenes:
+
+\begin{lstlisting}[language=bash]
+cd docs
+pdflatex informe.tex
+pdflatex informe.tex  # Segunda pasada para referencias cruzadas
+\end{lstlisting}
+
+El PDF compilado estará en \texttt{docs/informe.pdf}.
 
 \subsection{Ejecutar Ejercicios Individuales}
 
